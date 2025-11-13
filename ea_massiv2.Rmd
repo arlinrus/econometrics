@@ -1,0 +1,508 @@
+---
+title: "Анализ социального, экологического и управленческих секторов"
+author: "Астапенкова, Сорокина, Умыскова, Палакян, Осипова, Казначеев."
+#date: 
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r}
+library(readxl)
+library(lubridate)
+library(scales)
+#install.packages("readr")
+library(dplyr)
+library(readr)
+#install.packages('janitor')
+library(janitor)
+library(tidyverse)
+library(forcats)
+library(tidyr)
+library(ggplot2)
+
+
+```
+
+## Обрабатываем массив
+
+### Краткое описание столбцов в файле EA.xlsx при помощи ИИ:
+
+A: Company Common Name — название компании.
+
+B: Country of Headquarters — страна расположения штаб-квартиры.
+
+C: GICS Industry Name — отрасль по классификации GICS.
+
+D: Year — год отчётности.
+
+E: ESG Score — общий ESG-рейтинг (Environmental, Social, Governance).
+
+F: E Score — экологическая составляющая ESG.
+
+G: S Score — социальная составляющая ESG.
+
+H: G Score — управленческая составляющая ESG.
+
+I: MC — рыночная капитализация (Market Cap).
+
+J: TA — общие активы (Total Assets).
+
+K: ROA — рентабельность активов (Return on Assets).
+
+L: Debt — долг.
+
+M: PP&E — основные средства (Property, Plant & Equipment).
+
+N: CapEx — капитальные затраты (Capital Expenditures).
+
+O: Revenue — выручка.
+
+P: Cash — денежные средства.
+
+Q: EBIT — прибыль до вычета процентов и налогов.
+
+R: Tobin Q — коэффициент Тобина (отношение рыночной стоимости к стоимости активов).
+
+S: Leverage — финансовый леверидж (отношение долга к активам).
+
+T: OP_margin — операционная маржа.
+
+U–AC (ln\_...) — натуральные логарифмы соответствующих финансовых показателей (например, ln_MC — логарифм рыночной капитализации).
+
+AD: Industry — бинарный показатель отраслевой принадлежности (0 или 1).
+
+### Существуют ли пропуски...? Как мы можем обработать массив, сейчас мы это и узнаем!
+
+#### Посмотрим на данные до преобразования:
+
+```{r}
+data_ea <- read_excel("EA.xlsx")
+```
+
+Заметим, что большинство столбцов имеют пробелы между словами, а также существуют пробелы в целом в строках.
+Поэтому преобразуем имена столбцов в чистый формат:
+
+```{r}
+data_ea <- read_excel("EA.xlsx") |> clean_names()
+head(data_ea)
+```
+
+#### Посмотрим на типы переменных, а также пропущенные значения
+
+```{r}
+library(visdat)
+vis_dat(data_ea)
+```
+
+Заметим, что numeric преобладают над character.
+
+```{r}
+vis_miss(data_ea)
+```
+
+Пропущенных данных в массиве нету.
+
+Изобразим по переменных пропупущенные значения ещё раз, чтобы было нагляднее видно, что по всем данным Na отсутствует.
+
+```{r}
+colSums(is.na(data_ea))
+```
+
+Заметим, что пропусков в данных нету в обоих графиках.
+
+Теперь обработаем типы переменных и сам массив.
+Видим 3 типа chr и 31 num.
+
+```{r}
+str(data_ea)
+```
+
+```{r}
+#install.packages("stringi")
+library(stringi)
+
+clean <- function(x){
+  if (!is.character(x) && !is.factor(x)) return(x)
+  x <- as.character(x)
+  x <- ifelse(is.na(x), NA_character_, x)
+  x <- str_squish(x)
+  str_to_lower(x)
+}
+
+data_ea <- data_ea |> mutate(across(where(~ is.character(.) || is.factor(.)), clean))
+
+```
+
+Создадим функцию, в которой обозначим, что если переменные не равны chr и factor, то возвращаем преобразованные значения, которые мы задаем в переменную $x$.
+Таким образом, проверяем, является ли значение $x$ пропущенным (NA), и если да, то возвращает строку NA_character\_.
+В противном случае, она возвращает исходное значение $x$.
+
+Таким образом мы привели переменные к нижнему регистру и убрали пробелы вначале и вконце слова.
+
+```{r}
+summary(data_ea)
+glimpse(data_ea)
+sum(is.na(data_ea))
+#spec(data_ea)
+#sapply(data_ea, class)
+str(data_ea)
+```
+
+```{r}
+data_ea <- data_ea |>
+  mutate(
+    year = as.integer(year),
+    industry = as.integer(industry)
+  )
+```
+
+Поменяли тип переменных $даты$ и $industry$ на $integer$, так как $double$ не соответствует для года и бинарному показателю отраслевой принадлежности, потому что является натуральным числом. 
+
+#### Провериим повторяющиеся значения в данных:
+
+```{r}
+duplicates <- data_ea |>
+  group_by(country_of_headquarters, gics_industry_name, year,esg_score,e_score,s_score,g_score, mc, ta, roa, debt, pp_e, cap_ex, revenue, cash, ebit, tobin_q, leverage, op_margin, ln_mc, ln_debt, ln_pp_e, ln_cap_ex, ln_rev, ln_cash, ln_tq, ln_leverage, ln_op_margin, ln_esg, ln_e, ln_s, ln_g, industry) |>
+  filter(n() > 1)
+
+# Проверка количества повторов
+data_ea |> 
+  group_by(country_of_headquarters, gics_industry_name, year,esg_score,e_score,s_score,g_score, mc, ta, roa, debt, pp_e, cap_ex, revenue, cash, ebit, tobin_q, leverage, op_margin, ln_mc, ln_debt, ln_pp_e, ln_cap_ex, ln_rev, ln_cash, ln_tq, ln_leverage, ln_op_margin, ln_esg, ln_e, ln_s, ln_g, industry) |>
+  summarise(count = n()) |>
+  filter(count > 1)
+```
+
+*Повторяющихся* значений в данных нету.
+
+#### Посмотрим выбросы для всех финансовых показателей:
+
+```{r}
+financial_cols <- c("ln_mc", "ln_ta", "ln_roa", "ln_debt", "ln_pp_e", "ln_cap_ex",
+                    "ln_revenue", "ln_cash", "ln_ebit", "ln_tobin_q",
+                    "ln_leverage", "ln_op_margin")
+
+financial_cols <- financial_cols[financial_cols %in% names(data_ea)]
+
+df_long <- data_ea |>
+  select(all_of(financial_cols)) |>
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+ggplot(df_long, aes(x = variable, y = value)) +
+  geom_boxplot(outlier.colour = "red", fill = "lightblue") +
+  labs(title = "Выбросы по финансовым показателям",
+       x = "Показатель", y = "Значение") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+По боксплот видно, что все финансовые показатели имеют выбросы.
+В данном случае, мы *не будем* проводить их очистку, так как в масссиве предоставлены данные разных компаний с разной выручкой.
+Удаление выбросов может привести к искажению представления о данных в анализе.
+
+
+#### Изобразим гистаграмму распределния данных для визаульной наглядности распределения переменных:
+```{r}
+ggplot(df_long, aes(x=value))+
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "skyblue", color = "black") +
+  geom_density(color = "red", linewidth = 1) +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  labs(title = "Распределения логарифмированных показателей",
+       x = "Значение", y = "Плотность")
+  
+
+```
+
+По графику видно, что распределение у некоторых переменных равномерно, но для достоверности проведем тест.
+
+## Статистический анализ 
+
+### Описательная статистика
+
+```{r}
+data_ea_counts <- data_ea |> select('country_of_headquarters', 'e_score', 's_score', 'g_score')
+data_ea_counts  
+```
+
+```{r}
+country_counts <- data_ea_counts |>
+  count(`country_of_headquarters`) |>
+  arrange(desc(n))
+country_counts
+```
+
+```{r}
+knitr::opts_chunk$set(
+      cache = FALSE)
+country_data <- tibble::tribble(
+  ~"Country of Headquarters", ~n,
+  "China", 1093,
+  "Japan", 649,
+  "Korea; Republic (S. Korea)", 182
+)
+
+
+bp <- barplot(height = country_data$n,  
+              names.arg = country_data$`Country of Headquarters`,
+              main = 'Страна штаб-квартиры',
+              col = c('lightblue', 'lightgreen', 'salmon'),
+              xlab = "Страна",
+              ylab = "Количество компаний",
+              ylim = c(0, 1200), 
+              axes = FALSE)
+
+# Добавляем ось Y
+axis(2, at = seq(from = 0, to = 1200, by = 300))
+
+# Добавляем подписи значений
+text(x = bp, 
+     y = country_data$n + 10,  
+     labels = country_data$n,
+     pos = 3,  
+     col = "black",
+     font = 2)
+```
+По графику видно, что Китай преобладает над Японией и Северной Кореей.
+
+
+```{r}
+library(psych)
+library(skimr)
+library(corrplot)
+library(GGally)
+```
+
+#### Общая информация о данных
+
+```{r}
+cat("Период данных:", min(data_ea$year), "-", max(data_ea$year), "\n")
+cat("Общее количество наблюдений:", nrow(data_ea), "\n")
+cat("Количество уникальных компаний:", length(unique(data_ea$company_common_name)), "\n")
+cat("Количество стран:", length(unique(data_ea$country_of_headquarters)), "\n")
+cat("Количество отраслей (GICS):", length(unique(data_ea$gics_industry_name)), "\n")
+cat("Количество лет:", length(unique(data_ea$year)), "\n\n")
+```
+
+#### Распределение по странам(уникальные значения 701)
+
+```{r}
+country_dist <- data_ea |>
+  distinct(company_common_name, country_of_headquarters) |>
+  count(country_of_headquarters) |>
+  mutate(percent = round(n/701*100, 1))
+country_dist
+```
+
+Китай - 449 компаний (64.1%) Япония - 189 компаний (27%) Южная Корея - 63 компании (9%)
+
+#### Основные показатели (усрдненные)
+
+```{r}
+company_avg <- data_ea |>
+  group_by(company_common_name) |>
+  summarise(
+    esg = mean(esg_score),
+    roa = mean(roa) * 100,
+    leverage = mean(leverage) * 100,
+    op_margin = mean(op_margin) * 100,
+    .groups = 'drop'
+  )
+
+key_stats <- company_avg |>
+  summarise(
+    `ESG Score` = sprintf("%.1f (%.1f)", mean(esg), sd(esg)),
+    `ROA (%)` = sprintf("%.2f (%.2f)", mean(roa), sd(roa)),
+    `leverage (%)` = sprintf("%.1f (%.1f)", mean(leverage), sd(leverage)),
+    `op_margin (%)` = sprintf("%.1f (%.1f)", mean(op_margin), sd(op_margin))
+  )
+
+key_stats
+```
+
+*ESG Score*: Средний уровень ESG - компании показывают умеренные результаты.
+Высокая вариативность (стандартное отклонение 19.4) - огромный разброс между лидерами и аутсайдерами.
+Вывод: Значительные различия в качестве ESG.
+
+*ROA*: Экстремально высокие значения, явные выбросы.
+Нереалистичные цифры, тк ROA редко превышает 20-30%.
+Вывод: В данном случае подразуммевается чистка данных, но в массиве предоставлены разные компании, которые аналогично имеют разные показатели.
+Следовательно,
+
+*leverage*: Умеренная долговая нагрузка в среднем.
+Компании сильно различаются по структуре капитала.
+Вывод: Разные финансовые стратегии компаний.
+
+*op_margin*: Здоровая рентабельность операционной деятельности.
+Умеренная вариативность по сравнению с другими показателями.
+Вывод: Стабильные операционные результаты.
+
+#### Топ-5 отраслей
+
+```{r}
+data_ea |>
+  distinct(company_common_name, gics_industry_name) |>
+  count(gics_industry_name, name = "компаний") |>
+  top_n(5, компаний) |>
+  arrange(desc(компаний)) |> 
+  print()
+```
+
+Преобладают промышленные и производственные сектора.
+
+```{r}
+year_distribution <- data_ea |>
+  count(year, gics_industry_name) |>
+  group_by(year) |>
+  mutate(percentage = n / sum(n) * 100) |>
+  slice_max(n, n = 5) |>
+  arrange(year, desc(n))
+
+year_distribution
+```
+
+Обратим внимание, что в каждом году Химическая индустрия остается на первом месте.
+В 2022 году Электронное оборудование, инструменты и компоненты уступают металлам и горнодобывающей промышленности. А потом опять преуспевают в 2023 году.
+
+### Описателльная статистика E, S и G
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(psych)
+library(knitr)
+```
+
+```{r}
+esg_vars <- c("e_score", "s_score", "g_score")
+
+esg_vars <- esg_vars[esg_vars %in% names(data_ea)]
+
+# Считаем описательную статистику
+esg_summary <- data_ea |>
+  select(all_of(esg_vars)) |>
+  psych::describe() |>
+  as.data.frame() |>
+  select(mean, sd, median, min, max, skew, kurtosis)
+
+esg_summary
+```
+
+Средние значения (mean) показывают, что в целом компании демонстрируют: наивысшие результаты по Governance (G) - 51,9 балла, умеренные - по Environmental (E) - 47,3 балла, наименьшие - по Social (S) - 43,3 балла.
+
+Это говорит нам о том, что компании чаще фокусируются на *управленческой прозрачности и корпоративных стандартах*, чем на *социальных* и *экологических инициативах*.
+
+Стандартные отклонения (sd) достаточно велики (от 21 до 26), что указывает на значительную разницу между компаниями по каждому компоненту — ESG-практики сильно варьируются в зависимости от отрасли и страны.
+
+Асимметрия (skew) близка к нулю для всех трёх показателей, значит, распределения почти симметричны и нет значительного перекоса в сторону очень высоких или очень низких оценок.
+
+Эксцесс (kurtosis) отрицательный -> распределение данных является относительно сглаженным и имеет более короткие хвосты, где меньше экстремальных значений.
+
+### Средние ESG по годам
+
+```{r}
+esg_by_year <- data_ea |>
+  group_by(year) |>
+  summarise(
+    ESG_mean = mean(esg_score, na.rm = TRUE),
+    E_mean = mean(e_score, na.rm = TRUE),
+    S_mean = mean(s_score, na.rm = TRUE),
+    G_mean = mean(g_score, na.rm = TRUE)
+  )
+
+esg_by_year
+```
+
+```{r}
+esg_analysis <- esg_by_year |>
+  mutate(
+    E_growth = (E_mean - lag(E_mean)) / lag(E_mean) * 100,
+    S_growth = (S_mean - lag(S_mean)) / lag(S_mean) * 100,
+    G_growth = (G_mean - lag(G_mean)) / lag(G_mean) * 100,
+    ESG_growth = (ESG_mean - lag(ESG_mean)) / lag(ESG_mean) * 100
+  )
+
+esg_analysis
+```
+
+Какие выводы мы можем сдлеать на основании Экологии, социальной сфере и управления(политика?):
+ESG общий: Рост 6-7% (продолжение ускорения)
+
+Environmental: Рост 8-9% (климатическая повестка)
+
+Social: Рост 9-10% (фокус на человеческий капитал)
+
+Governance: Стагнация или умеренный рост 1-2%
+
+
+
+#### График динамики ESG (визуализация по среднему)
+
+```{r}
+esg_by_year_long <- esg_by_year |>
+  pivot_longer(cols = -year, names_to = "component", values_to = "value")
+
+ggplot(esg_by_year_long, aes(x = year, y = value, color = component)) +
+  geom_line(size = 1) +
+  geom_point() +
+  theme_minimal() +
+  labs(title = "Динамика ESG показателей (2020–2023)", y = "Среднее значение", x = "Год")
+```
+
+С 2020 по 2023 годы общий ESG-рейтинг компаний постепенно растёт (с 46,2 до 49,8), что отражает повышение внимания бизнеса к устойчивому развитию.
+
+Самый резкий рост наблюдается  по экологической сфере.
+Компании активнее внедряют «зелёные» инициативы, сокращают выбросы, переходят на возобновляемые источники энергии и экологические стандарты производства.
+
+Социальная сфера также усилился (с 41,2 до 46,1), что может быть связано с ростом значимости условий труда, безопасности и разнообразия персонала.
+
+Управленческая сфера (G) остаётся стабильно высоким, без выраженного роста.
+
+#### Разрез по отраслям
+
+```{r}
+# Средние значения по каждой отрасли
+industry_esg_detail <- data_ea |>
+  group_by(gics_industry_name) |>
+  summarise(
+    E_mean = mean(e_score, na.rm = TRUE),
+    S_mean = mean(s_score, na.rm = TRUE),
+    G_mean = mean(g_score, na.rm = TRUE)
+  ) |>
+  arrange(desc(E_mean))
+
+# График для E
+ggplot(industry_esg_detail, aes(x = reorder(gics_industry_name, E_mean), y = E_mean)) +
+  geom_col(fill = "lightgreen") +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  labs(title = "Средние Environmental (E) Score по отраслям",
+       x = "Отрасль", y = "Средний E Score")
+
+# График для S
+ggplot(industry_esg_detail, aes(x = reorder(gics_industry_name, S_mean), y = S_mean)) +
+  geom_col(fill = "lightblue") +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  labs(title = "Средние Social (S) Score по отраслям",
+       x = "Отрасль", y = "Средний S Score")
+
+# График для G
+ggplot(industry_esg_detail, aes(x = reorder(gics_industry_name, G_mean), y = G_mean)) +
+  geom_col(fill = "pink") +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  labs(title = "Средние Governance (G) Score по отраслям",
+       x = "Отрасль", y = "Средний G Score")
+```
+
+На барчарте по E-компоненту видно, что: Лидеры по экологическим инициативам - отрасли телекоммуникаций, высоких технологий и строительства.
+Аутсайдеры - медиа, развлечения, ПО и биотехнологии, где экологические процессы менее выражены.
+
+по S-компоненте: Лидерами по социальным показателям являются отрасли телекоммуникаций и здравоохранения.
+В то же время, сектора биотехнологий, медиа и программного обеспечения демонстрируют наиболее низкие результаты в этой области.
+
+по G-компоненте: Наивысшие оценки корпоративного управления также у телекоммуникаций, здравоохранения и технологического сектора.
+При этом отрасль программного обеспечения и медиа снова оказывается в аутсайдерах, что указывает на системные пробелы в качестве управления компаний этого сектора.
